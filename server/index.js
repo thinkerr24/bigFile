@@ -58,7 +58,7 @@ app.post("/upload/:fileName", async (req, res, next) => {
 app.get("/merge/:fileName", async (req, res, next) => {
   const { fileName } = req.params;
   try {
-    await mergeChunks(fileName);
+    await mergeChunks(fileName, next);
     res.json({ success: true });
   } catch (error) {
     next(error);
@@ -72,7 +72,7 @@ function pipeStream(rs, ws) {
   });
 }
 
-async function mergeChunks(fileName) {
+async function mergeChunks(fileName, next) {
   const chunkDir = path.resolve(TEMP_DIR, fileName);
   const mergedFilePath = path.resolve(PUBLIC_DIR, fileName);
   const chunkFiles = await fs.readdir(chunkDir);

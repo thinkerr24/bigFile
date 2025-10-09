@@ -45,7 +45,7 @@ export function useDrag(uploadContainerRef) {
         event.stopPropagation(); // 阻止事件传播
 
         const { files } = event.dataTransfer;
-        checkFile(files)
+        checkFile(files);
     }, []);
 
     const checkFile = files => {
@@ -66,5 +66,10 @@ export function useDrag(uploadContainerRef) {
         }
     };
 
-    return { selectedFile, filePreview };
+    const resetFileStatus = () => {
+        setSelectedFile(null);
+        setFilePreview({ url: null, type: null });
+    };
+
+    return { selectedFile, filePreview, resetFileStatus };
 }

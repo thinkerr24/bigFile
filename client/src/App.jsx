@@ -1,5 +1,3 @@
-import { useState } from 'react'
-
 import FileUploader from '@/components/FileUploader'
 
 import './App.css'

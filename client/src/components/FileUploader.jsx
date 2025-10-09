@@ -1,5 +1,5 @@
-import { useRef } from "react";
-import { Button, Empty, message } from "antd";
+import { useRef, useState } from "react";
+import { Button, Empty, message, Progress } from "antd";
 import { InboxOutlined } from "@ant-design/icons";
 
 import { useDrag } from "@/hooks/useDrag";
@@ -12,7 +12,13 @@ import "./FileUploader.css";
 
 export default function FileUploader() {
     const uploadContainerRef = useRef(null);
-    const { selectedFile, filePreview } = useDrag(uploadContainerRef);
+    const { selectedFile, filePreview, resetFileStatus } = useDrag(uploadContainerRef);
+    const [uploadProgress, setUploadProgress] = useState({});
+
+    const resetAllStatus = () => {
+        resetFileStatus();
+        setUploadProgress({});
+    };
 
     const handleUpload = async () => {
         if (!selectedFile) {
@@ -20,8 +26,30 @@ export default function FileUploader() {
         } else {
             const filename = await getFileName(selectedFile);
             // console.log('filename:', filename)
-            await uploadFile(selectedFile, filename);
+            await uploadFile(selectedFile, filename, setUploadProgress, resetAllStatus);
         }
+    };
+
+    const renderProgress = () => {
+        // 切片进度条
+        return Object.keys(uploadProgress).map((chunkName, index) => (
+            <div key={chunkName + "progress"}>
+                <span>
+                    切片:{index}:
+                </span>
+                <Progress percent={uploadProgress[chunkName]} />
+            </div>
+        ));
+    };
+
+    const renderTotalProgress = () => {
+        // 总进度条
+        const total = Math.ceil(Object.values(uploadProgress).reduce((pre, cur) => pre + cur, 0));
+        return (
+            <div key={"progress"}>
+                {total > 0 && <Progress percent={Number(total / Object.values(uploadProgress).length).toFixed(2)} />}
+            </div>
+        );
     };
 
     return (
@@ -31,19 +59,31 @@ export default function FileUploader() {
                 {renderFilePreview(filePreview)}
             </div>
             <Button onClick={handleUpload}>上传</Button>
+            {renderTotalProgress()}
+            {/* {renderProgress()} */}
         </>
     );
 }
 
-function createRequest(fileName, chunk, chunkFileName) {
+function createRequest(fileName, chunk, chunkFileName, setUploadProgress) {
     return axiosInstance.post(`/upload/${fileName}`, chunk, {
         headers: {
-            'Content-Type': 'application/octet-stream' // 这个请求头是告诉服务器请求体是一个二进制格式，是一个字节流
+            "Content-Type": "application/octet-stream" // 这个请求头是告诉服务器请求体是一个二进制格式，是一个字节流
         },
-        params: { // querystring
+        params: {
+            // querystring
             chunkFileName
+        },
+        // axios内部调用原生的XMLHttpRequest
+        onUploadProgress: progressEvent => {
+            // 用已经上传的字节数除以总字节数得到完成的百分比
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            setUploadProgress(prevProgress => ({
+                ...prevProgress,
+                [chunkFileName]: percentCompleted
+            }));
         }
-    }); 
+    });
 }
 
 /**
@@ -51,12 +91,12 @@ function createRequest(fileName, chunk, chunkFileName) {
  * @param {*} file
  * @param {*} fileName
  */
-async function uploadFile(file, fileName) {
+async function uploadFile(file, fileName, setUploadProgress, resetAllStatus) {
     // 对文件进行切片
     const chunks = createFileChunks(file, fileName);
     // 实现并行上传
     const requests = chunks.map(({ chunk, chunkFileName }) => {
-        return createRequest(fileName, chunk, chunkFileName);
+        return createRequest(fileName, chunk, chunkFileName, setUploadProgress);
     });
 
     try {
@@ -64,10 +104,11 @@ async function uploadFile(file, fileName) {
         await Promise.all(requests);
         // 等全部分片上传完了，会香服务器发送一个合并文件的请求
         await axiosInstance.get(`/merge/${fileName}`);
-        message.success('文件上传完成!');
-    } catch(error) {
-        console.error('uploadFile error:', error);
-        message.error('上传出错!');
+        message.success("文件上传完成!");
+        resetAllStatus();
+    } catch (error) {
+        console.error("uploadFile error:", error);
+        message.error("上传出错!");
     }
 }
 
