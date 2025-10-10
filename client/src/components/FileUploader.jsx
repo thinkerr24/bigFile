@@ -28,7 +28,7 @@ export default function FileUploader() {
 
     const resetAllStatus = () => {
         resetFileStatus();
-        setUploadProgress({});
+        // setUploadProgress({});
         setUploadStatus(UPLOAD_STATUS.NOT_STARTED);
     };
 
@@ -80,7 +80,7 @@ export default function FileUploader() {
                 {uploadStatus !== UPLOAD_STATUS.NOT_STARTED &&
                 <div key={"total-progress-bar"}>
                     <span>总进度条</span>
-                    <Progress percent={uploadValues.length === 0 ? 0 : Number(total / uploadValues.length).toFixed(2)} />
+                    <Progress percent={uploadValues.length === 0 ? 0 : Math.round(total / uploadValues.length)} />
                     {renderProgress()}
                 </div>}
             </>
@@ -100,19 +100,20 @@ export default function FileUploader() {
     );
 }
 
-function createRequest(fileName, chunk, chunkFileName, setUploadProgress, sourceCancelToken) {
+function createRequest(fileName, chunk, chunkFileName, setUploadProgress, startPos, totalSize, sourceCancelToken) {
     return axiosInstance.post(`/upload/${fileName}`, chunk, {
         headers: {
             "Content-Type": "application/octet-stream" // 这个请求头是告诉服务器请求体是一个二进制格式，是一个字节流
         },
         params: {
             // querystring
-            chunkFileName
+            chunkFileName,
+            startPos // 写入文件的起始位置
         },
         // axios内部调用原生的XMLHttpRequest
         onUploadProgress: progressEvent => {
-            // 用已经上传的字节数除以总字节数得到完成的百分比
-            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            // progressEvent.loaded本次上传成功的字节 + start上次上传成功的字节 / 总字节数
+            const percentCompleted = Math.round(((progressEvent.loaded  + startPos ) * 100) / totalSize);
             setUploadProgress(prevProgress => ({
                 ...prevProgress,
                 [chunkFileName]: percentCompleted
@@ -128,7 +129,7 @@ function createRequest(fileName, chunk, chunkFileName, setUploadProgress, source
  * @param {*} fileName
  */
 async function uploadFile(file, fileName, setUploadProgress, resetAllStatus, setCancelTokens) {
-    const { needUpload } = await axiosInstance.get(`/verify/${fileName}`);
+    const { needUpload, uploadedChunkList } = await axiosInstance.get(`/verify/${fileName}`);
     if (!needUpload) {
         message.success(`文件已存在，秒传成功`);
         return resetAllStatus();
@@ -141,9 +142,35 @@ async function uploadFile(file, fileName, setUploadProgress, resetAllStatus, set
     const requests = chunks.map(({ chunk, chunkFileName }) => {
         const cancelToken = axios.CancelToken.source();
         newCancelTokens.push(cancelToken); 
-        return createRequest(fileName, chunk, chunkFileName, setUploadProgress, cancelToken);
-    });
+        // 判断给服务器发送是否是完整的分片数据
+        const existingChunk = uploadedChunkList.find(uploadedChunk => {
+            return uploadedChunk.chunkFileName === chunkFileName
+        });
 
+        // 如果已经上传过
+        if (existingChunk) {
+            const uploadedSize = existingChunk.size;
+            // 从chunk中进行截取，过滤掉已经上传过的大小，得到剩下需要上传的内容
+            const remainingChunk = chunk.slice(uploadedSize);
+            if (remainingChunk.size === 0) {
+                setUploadProgress(prevProgress => ({
+                    ...prevProgress,
+                    [chunkFileName]: 100
+                }));
+                return Promise.resolve();
+            } else {
+                setUploadProgress(prevProgress => ({
+                    ...prevProgress,
+                    [chunkFileName]: chunk.size > 0 ? Math.round(uploadedSize * 100 / chunk.size) : 0
+                }));
+                // 如果还有没传完的，继续上传剩下的
+                return createRequest(fileName, remainingChunk, chunkFileName, setUploadProgress, uploadedSize, chunk.size, cancelToken);
+            }
+        } else {
+            return createRequest(fileName, chunk, chunkFileName, setUploadProgress, 0, chunk.size, cancelToken);            
+        }
+
+    });
     setCancelTokens(newCancelTokens);
 
     try {

@@ -26,10 +26,10 @@ app.use(express.static(path.resolve(__dirname, "public")));
  * 上传分片的接口
  */
 app.post("/upload/:fileName", async (req, res, next) => {
-  const { fileName } = req.params; // 路径参数
+  const { fileName, startPos } = req.params; // 路径参数
   const { chunkFileName } = req.query; // 查询参数
-  console.log("fileName:", fileName);
-  console.log("chunkFileName:", chunkFileName);
+
+  const start = isNaN(startPos) ? 0 : parseInt(startPos, 10);
 
   // 创建保存文件分片的目录
   const chunkDir = path.resolve(TEMP_DIR, fileName);
@@ -37,8 +37,8 @@ app.post("/upload/:fileName", async (req, res, next) => {
   const chunkFilePath = path.resolve(chunkDir, chunkFileName);
   // 确定路径存在
   await fs.ensureDirSync(chunkDir);
-  // 创建文件可写流
-  const ws = fs.createWriteStream(chunkFilePath, {});
+  // 创建文件可写流(可指定写入的起始位置)
+  const ws = fs.createWriteStream(chunkFilePath, { start, flags: 'a'});
 
   // 为暂停功能做准备
   // aborted事件，关闭可写流
@@ -68,14 +68,30 @@ app.get("/merge/:fileName", async (req, res, next) => {
 app.get('/verify/:fileName', async(req, res, next) => {
   const { fileName } = req.params;
   const filePath = path.resolve(PUBLIC_DIR, fileName);
+  // 检查文件是否存在
   const existFile = await fs.pathExists(filePath);
   if (existFile) {
     return res.json({
       success: true, needUpload: false
     })
   }
+  const chunksDir = path.resolve(TEMP_DIR, fileName);
+  const existDir = await fs.pathExists(chunksDir);
+  // 存放已经上传的分片的对象数组
+  let uploadedChunkList = [];
+  if (existDir) {
+    // 读取临时目录里所有的分片对应的文件
+    const chunkFileNames = await fs.readdir(chunksDir);
+    // 读取每个分片文件的文件信息
+    uploadedChunkList = await Promise.all(chunkFileNames.map(async function (chunkFileName) {
+        const { size } = await fs.stat(path.resolve(chunksDir, chunkFileName));
+        return { chunkFileName, size };
+    }));
+  }
+
+  // 如果没有此文件，则需要上传(已经上传一部分的，把已经上传的分片名，以及分片的大小给客户端， 客户端只上传剩下的部分即可)
   return res.json({
-    success: true, needUpload: true
+    success: true, needUpload: true, uploadedChunkList
   })
 });
 
