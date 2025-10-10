@@ -5,7 +5,7 @@ import axios from "axios";
 
 import { useDrag } from "@/hooks/useDrag";
 
-import { CHUNK_SIZE } from "@/utils/constants";
+import { CHUNK_SIZE, MAX_RETRIES } from "@/utils/constants";
 
 import axiosInstance from "@/services/axiosInstance";
 
@@ -146,7 +146,7 @@ function createRequest(fileName, chunk, chunkFileName, setUploadProgress, startP
  * @param {*} file
  * @param {*} fileName
  */
-async function uploadFile(file, fileName, setUploadProgress, resetAllStatus, setCancelTokens) {
+async function uploadFile(file, fileName, setUploadProgress, resetAllStatus, setCancelTokens, retryCount = 0) {
     const { needUpload, uploadedChunkList } = await axiosInstance.get(`/verify/${fileName}`);
     if (!needUpload) {
         message.success(`文件已存在，秒传成功`);
@@ -204,8 +204,13 @@ async function uploadFile(file, fileName, setUploadProgress, resetAllStatus, set
             console.log('上传暂停');
             message.warning("暂停上传!");
         } else {
-            console.error("uploadFile error:", error);
-            message.error("上传出错!");
+            if (retryCount < MAX_RETRIES) {
+                console.log('上传出错, 重试中...')
+                uploadFile(file, fileName, setUploadProgress, resetAllStatus, setCancelTokens, retryCount + 1)
+            } else {
+                console.error("uploadFile error:", error);
+                message.error("上传出错!");
+            }
         }
     }
 }

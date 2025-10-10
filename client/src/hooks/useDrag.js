@@ -1,9 +1,13 @@
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useCallback, useState, useRef } from "react";
 import { message } from "antd";
 
 import { MAX_FILE_SIZE } from "@/utils/constants";
 
 export function useDrag(uploadContainerRef) {
+
+    // Avoid useEffect execute twice in DEV_ENV
+    const initialized = useRef(false)
+
     // 定义一个状态用来保存用户选中的文件
     const [selectedFile, setSelectedFile] = useState(null);
 
@@ -35,6 +39,21 @@ export function useDrag(uploadContainerRef) {
         };
     }, []);
 
+    // 实现点击上传
+    useEffect(() => {
+        const uploadContainer = uploadContainerRef.current;
+        if (!initialized.current) {
+            initialized.current = true;
+            uploadContainer.addEventListener('click', handleClick);
+        }
+
+        return () => {
+            if (uploadContainerRef.current) {
+                uploadContainerRef.current.removeEventListener("click", handleClick);
+            }
+        }; 
+    }, []);
+
     const handleDrag = useCallback(event => {
         event.preventDefault(); // 阻止默认行为
         event.stopPropagation(); // 阻止事件传播
@@ -48,7 +67,22 @@ export function useDrag(uploadContainerRef) {
         checkFile(files);
     }, []);
 
+    const handleClick = useCallback(() => {
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.style.display = 'none';
+
+        fileInput.addEventListener('change', (event) => {
+            checkFile(event.target.files);
+        });
+        document.body.appendChild(fileInput);
+        // 手动触发文件的选择
+        fileInput.click();
+
+    }, []);
+
     const checkFile = files => {
+        // debugger;
         const file = files[0]; // 先拿第一个文件
 
         if (!file) {
