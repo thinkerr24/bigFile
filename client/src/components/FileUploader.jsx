@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import { Button, Empty, message, Progress } from "antd";
+import { useEffect, useRef, useState } from "react";
+import { Button, Empty, message, Progress, Spin } from "antd";
 import { InboxOutlined } from "@ant-design/icons";
 import axios from "axios";
 
@@ -26,6 +26,14 @@ export default function FileUploader() {
     // 存放所有上传请求的取消token
     const [cancelTokens, setCancelTokens] = useState([]);
 
+    const [fileNameWorker, setFileNameWorker] = useState(null);
+    const [isCalculatingFileName, setIsCalculatingFileName] = useState(false);
+
+    useEffect(() => {
+        const fileNameWorker = new Worker('/fileNameWorker.js');
+        setFileNameWorker(fileNameWorker);
+    }, []);
+
     const resetAllStatus = () => {
         resetFileStatus();
         // setUploadProgress({});
@@ -37,9 +45,18 @@ export default function FileUploader() {
             message.error("尚未选中文件!");
         } else {
             setUploadStatus(UPLOAD_STATUS.UPLOADING);
-            const filename = await getFileName(selectedFile);
+            // const filename = await getFileName(selectedFile);
             // console.log('filename:', filename)
-            await uploadFile(selectedFile, filename, setUploadProgress, resetAllStatus, setCancelTokens);
+
+            // 向WebWorker发送一个消息，让ta帮助计算文件对应的文件名
+            fileNameWorker.postMessage(selectedFile);
+            setIsCalculatingFileName(true);
+
+            fileNameWorker.onmessage = async (event) => {
+                setIsCalculatingFileName(false);
+                await uploadFile(selectedFile, event.data, setUploadProgress, resetAllStatus, setCancelTokens);
+            }
+        
         }
     };
 
@@ -94,6 +111,7 @@ export default function FileUploader() {
                 {renderFilePreview(filePreview)}
             </div>
             {renderButtons()}
+            {isCalculatingFileName && <Spin tip={<span>正在计算文件名...</span>}></Spin>}
             {renderTotalProgress()}
             {/* {renderProgress()} */}
         </>
@@ -207,37 +225,6 @@ function createFileChunks(file, fileName) {
     return chunks;
 }
 
-/**
- * 根据文件对象获取文件内容, 进而得到hash文件名
- * @param {*} file
- */
-async function getFileName(file) {
-    // 计算此文件的hash值
-    const fileHash = await calculateFileHash(file);
-    // 获取文件拓展名
-    const fileExtension = file.name.split(".").pop();
-    return `${fileHash}.${fileExtension}`;
-}
-
-/**
- * 计算文件的hash字符串
- * @param {*} file
- * @returns
- */
-async function calculateFileHash(file) {
-    const arrayBuffer = await file.arrayBuffer();
-    const hashBuffer = await crypto.subtle.digest("SHA-256", arrayBuffer);
-    return bufferToHex(hashBuffer);
-}
-
-/**
- *   把ArrayBuffer转成16进制的字符串
- */
-function bufferToHex(buffer) {
-    return Array.from(new Uint8Array(buffer))
-        .map(b => b.toString(16).padStart(2, "0"))
-        .join("");
-}
 
 /**
  * 文件的预览
