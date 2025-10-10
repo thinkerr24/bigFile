@@ -124,6 +124,8 @@ async function mergeChunks(fileName, next) {
 
     // 删除存储分片文件的临时目录
     await  fs.rm(chunkDir, { recursive: true });
+    // 合并完文件后可以重新计算合并后的文件hash值，与文件中的hash值进行对比
+    // 如果值是一样的，说明文件没有被修改
   } catch (error) {
     next(error);
   }
