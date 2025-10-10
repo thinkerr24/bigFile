@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { Button, Empty, message, Progress } from "antd";
 import { InboxOutlined } from "@ant-design/icons";
+import axios from "axios";
 
 import { useDrag } from "@/hooks/useDrag";
 
@@ -10,33 +11,61 @@ import axiosInstance from "@/services/axiosInstance";
 
 import "./FileUploader.css";
 
+const UPLOAD_STATUS = {
+    NOT_STARTED: "NOT_STARTED", // 初始状态，尚未上传
+    UPLOADING: "UPLOADING", // 上传中
+    PAUSED: "PAUSED" // 已暂停
+};
+
 export default function FileUploader() {
     const uploadContainerRef = useRef(null);
     const { selectedFile, filePreview, resetFileStatus } = useDrag(uploadContainerRef);
     const [uploadProgress, setUploadProgress] = useState({});
+    // 控制上传的状态，初始态，上传中，已暂停
+    const [uploadStatus, setUploadStatus] = useState(UPLOAD_STATUS.NOT_STARTED);
+    // 存放所有上传请求的取消token
+    const [cancelTokens, setCancelTokens] = useState([]);
 
     const resetAllStatus = () => {
         resetFileStatus();
         setUploadProgress({});
+        setUploadStatus(UPLOAD_STATUS.NOT_STARTED);
     };
 
     const handleUpload = async () => {
         if (!selectedFile) {
             message.error("尚未选中文件!");
         } else {
+            setUploadStatus(UPLOAD_STATUS.UPLOADING);
             const filename = await getFileName(selectedFile);
             // console.log('filename:', filename)
-            await uploadFile(selectedFile, filename, setUploadProgress, resetAllStatus);
+            await uploadFile(selectedFile, filename, setUploadProgress, resetAllStatus, setCancelTokens);
         }
     };
+
+    const pauseUpload = async () => {
+        setUploadStatus(UPLOAD_STATUS.PAUSED);
+        cancelTokens.forEach(token => token.cancel('用户主动暂停了上传'));
+    }
+
+
+    const renderButtons = () => {
+        switch(uploadStatus) {
+            case UPLOAD_STATUS.NOT_STARTED:
+                return <Button onClick={handleUpload}>上传</Button>
+             case UPLOAD_STATUS.UPLOADING:
+                return <Button onClick={pauseUpload}>暂停</Button>
+            case UPLOAD_STATUS.PAUSED:
+                return <Button onClick={handleUpload}>恢复上传</Button>                               
+        }
+       
+    }
 
     const renderProgress = () => {
         // 切片进度条
         return Object.keys(uploadProgress).map((chunkName, index) => (
             <div key={chunkName + "progress"}>
-                <span>
-                    切片:{index}:
-                </span>
+                <span>切片:{index}:</span>
                 <Progress percent={uploadProgress[chunkName]} />
             </div>
         ));
@@ -44,11 +73,17 @@ export default function FileUploader() {
 
     const renderTotalProgress = () => {
         // 总进度条
-        const total = Math.ceil(Object.values(uploadProgress).reduce((pre, cur) => pre + cur, 0));
+        const uploadValues = Object.values(uploadProgress);
+        const total = Math.ceil(uploadValues.reduce((pre, cur) => pre + cur, 0));
         return (
-            <div key={"progress"}>
-                {total > 0 && <Progress percent={Number(total / Object.values(uploadProgress).length).toFixed(2)} />}
-            </div>
+            <>
+                {uploadStatus !== UPLOAD_STATUS.NOT_STARTED &&
+                <div key={"total-progress-bar"}>
+                    <span>总进度条</span>
+                    <Progress percent={uploadValues.length === 0 ? 0 : Number(total / uploadValues.length).toFixed(2)} />
+                    {renderProgress()}
+                </div>}
+            </>
         );
     };
 
@@ -58,14 +93,14 @@ export default function FileUploader() {
                 <InboxOutlined />
                 {renderFilePreview(filePreview)}
             </div>
-            <Button onClick={handleUpload}>上传</Button>
+            {renderButtons()}
             {renderTotalProgress()}
             {/* {renderProgress()} */}
         </>
     );
 }
 
-function createRequest(fileName, chunk, chunkFileName, setUploadProgress) {
+function createRequest(fileName, chunk, chunkFileName, setUploadProgress, sourceCancelToken) {
     return axiosInstance.post(`/upload/${fileName}`, chunk, {
         headers: {
             "Content-Type": "application/octet-stream" // 这个请求头是告诉服务器请求体是一个二进制格式，是一个字节流
@@ -82,7 +117,8 @@ function createRequest(fileName, chunk, chunkFileName, setUploadProgress) {
                 ...prevProgress,
                 [chunkFileName]: percentCompleted
             }));
-        }
+        },
+        cancelToken: sourceCancelToken.token
     });
 }
 
@@ -91,13 +127,24 @@ function createRequest(fileName, chunk, chunkFileName, setUploadProgress) {
  * @param {*} file
  * @param {*} fileName
  */
-async function uploadFile(file, fileName, setUploadProgress, resetAllStatus) {
+async function uploadFile(file, fileName, setUploadProgress, resetAllStatus, setCancelTokens) {
+    const { needUpload } = await axiosInstance.get(`/verify/${fileName}`);
+    if (!needUpload) {
+        message.success(`文件已存在，秒传成功`);
+        return resetAllStatus();
+    }
     // 对文件进行切片
     const chunks = createFileChunks(file, fileName);
+
+    const newCancelTokens = [];
     // 实现并行上传
     const requests = chunks.map(({ chunk, chunkFileName }) => {
-        return createRequest(fileName, chunk, chunkFileName, setUploadProgress);
+        const cancelToken = axios.CancelToken.source();
+        newCancelTokens.push(cancelToken); 
+        return createRequest(fileName, chunk, chunkFileName, setUploadProgress, cancelToken);
     });
+
+    setCancelTokens(newCancelTokens);
 
     try {
         // 并行上传分片
@@ -107,8 +154,14 @@ async function uploadFile(file, fileName, setUploadProgress, resetAllStatus) {
         message.success("文件上传完成!");
         resetAllStatus();
     } catch (error) {
-        console.error("uploadFile error:", error);
-        message.error("上传出错!");
+        // 如果是用户主动点击了暂停按钮
+        if (axios.isCancel(error)) {
+            console.log('上传暂停');
+            message.warning("暂停上传!");
+        } else {
+            console.error("uploadFile error:", error);
+            message.error("上传出错!");
+        }
     }
 }
 

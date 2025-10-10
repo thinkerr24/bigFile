@@ -65,6 +65,20 @@ app.get("/merge/:fileName", async (req, res, next) => {
   }
 });
 
+app.get('/verify/:fileName', async(req, res, next) => {
+  const { fileName } = req.params;
+  const filePath = path.resolve(PUBLIC_DIR, fileName);
+  const existFile = await fs.pathExists(filePath);
+  if (existFile) {
+    return res.json({
+      success: true, needUpload: false
+    })
+  }
+  return res.json({
+    success: true, needUpload: true
+  })
+});
+
 function pipeStream(rs, ws) {
   return new Promise((resolve, reject) => {
     // 把可读流中的数据写入可写流中
@@ -93,7 +107,7 @@ async function mergeChunks(fileName, next) {
     await Promise.all(pipes);
 
     // 删除存储分片文件的临时目录
-    await fs.rmdir(chunkDir, { recursive: true });
+    await  fs.rm(chunkDir, { recursive: true });
   } catch (error) {
     next(error);
   }
